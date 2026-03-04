@@ -122,47 +122,104 @@ Notes:
 
 # HOW TO TEST LOCALLY
 
-## 1) Start PostgreSQL
+This section is intentionally command-by-command so you can copy/paste without guessing.
 
-Example with Docker:
+## 0) Prerequisites
+
+- Python 3.10+
+- Docker (recommended for local PostgreSQL)
+- `psql` client installed locally
+- Two terminals (one for API server, one for curl/tests)
+
+## 1) Start PostgreSQL container
 
 ```bash
+docker rm -f backend-patterns-pg 2>/dev/null || true
 docker run --name backend-patterns-pg \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=backend_patterns \
   -p 5432:5432 -d postgres:16
 ```
 
-## 2) Install dependencies
+Wait for PostgreSQL to become healthy:
+
+```bash
+docker logs -f backend-patterns-pg
+```
+
+When you see `database system is ready to accept connections`, stop following logs (`Ctrl+C`).
+
+## 2) Create virtual environment and install dependencies
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## 3) Run database initialization SQL
+## 3) (Optional but recommended) create `.env` for local settings
+
+```bash
+cat > .env <<'EOF'
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/backend_patterns
+JWT_SECRET_KEY=change-me-in-real-env
+JWT_ALGORITHM=HS256
+ENABLE_LOCAL_JWT_BYPASS=true
+LOCAL_TEST_TENANT_ID=00000000-0000-0000-0000-000000000001
+LOCAL_TEST_USER_ID=00000000-0000-0000-0000-000000000002
+LOCAL_TEST_ROLE=ADMIN
+MAX_INGEST_BATCH_SIZE=1000
+ALLOWED_VIEW_NAMES=["team_view"]
+ALLOWED_DATABASE_NAMES=["core"]
+ALLOWED_READ_TABLE_NAMES=["teams"]
+EOF
+```
+
+## 4) Initialize database schemas, tables, and stored procedures
 
 ```bash
 psql postgresql://postgres:postgres@localhost:5432/backend_patterns -f app/db/sql/001_init.sql
 ```
 
-## 4) Start FastAPI
+Quick check that required schemas exist:
 
 ```bash
+psql postgresql://postgres:postgres@localhost:5432/backend_patterns -c "\dn"
+```
+
+You should see `auth`, `raw`, `core`, and `analytics`.
+
+## 5) Insert local ingestion API key for test tenant
+
+```bash
+psql postgresql://postgres:postgres@localhost:5432/backend_patterns <<'SQL'
+INSERT INTO auth.api_keys (tenant_id, api_key, role, can_ingest, is_active)
+VALUES ('00000000-0000-0000-0000-000000000001', 'local-dev-api-key', 'INGESTION_CLIENT', TRUE, TRUE)
+ON CONFLICT (api_key) DO NOTHING;
+SQL
+```
+
+## 6) Start FastAPI (Terminal A)
+
+```bash
+source .venv/bin/activate
 uvicorn app.main:app --reload
 ```
 
-## 5) Test ingestion with API key
+Health check from Terminal B:
 
-First, insert a local test API key (if you did not uncomment seed section):
-
-```sql
-INSERT INTO auth.api_keys (tenant_id, api_key, role, can_ingest, is_active)
-VALUES ('00000000-0000-0000-0000-000000000001', 'local-dev-api-key', 'INGESTION_CLIENT', TRUE, TRUE);
+```bash
+curl http://127.0.0.1:8000/health
 ```
 
-Then call ingest:
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+## 7) Call ingestion endpoint (Terminal B)
 
 ```bash
 curl -X POST http://127.0.0.1:8000/ingest \
@@ -178,7 +235,13 @@ curl -X POST http://127.0.0.1:8000/ingest \
   }'
 ```
 
-## 6) Read curated data through generic stored procedure-backed API
+Expected response shape:
+
+```json
+{"status":"accepted","inserted_raw_count":2}
+```
+
+## 8) Query curated data via generic read endpoint (Terminal B)
 
 ```bash
 curl -X POST http://127.0.0.1:8000/read/query \
@@ -186,17 +249,39 @@ curl -X POST http://127.0.0.1:8000/read/query \
   -H 'X-API-Key: local-dev-api-key' \
   -d '{
     "Table_Name": "teams",
-    "LastUpdatedDateStart": "2026-01-01T00:00:00Z",
-    "LastUpdatedDateEnd": "2026-12-31T23:59:59Z",
-    "RecordID": 12345
+    "CreatedDateStart": "2020-01-01T00:00:00Z",
+    "CreatedDateEnd": "2030-01-01T00:00:00Z"
   }'
 ```
 
-## 7) Run retention cleanup script
+Expected response: JSON array of tenant-scoped records with fields:
+- `record_id`
+- `record_name`
+- `created_at`
+- `updated_at`
+
+## 9) Run retention cleanup example
 
 ```bash
+source .venv/bin/activate
 python scripts/retention_cleanup.py --days 60
 ```
+
+## 10) Troubleshooting quick checks
+
+- If API cannot connect to DB, verify container is running:
+  ```bash
+  docker ps
+  ```
+- If read endpoint returns `Unsupported Table_Name`, verify payload uses:
+  ```json
+  {"Table_Name":"teams"}
+  ```
+- If auth fails, verify API key exists:
+  ```bash
+  psql postgresql://postgres:postgres@localhost:5432/backend_patterns -c "SELECT tenant_id, api_key, is_active, can_ingest FROM auth.api_keys;"
+  ```
+- If you want to temporarily bypass JWT/API-key for local dev, use the clearly marked optional block in `app/core/security.py` (`ENABLE_LOCAL_JWT_BYPASS=true`).
 
 ---
 
