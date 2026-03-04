@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     MAX_INGEST_BATCH_SIZE: int = Field(default=1000)
     ALLOWED_VIEW_NAMES: list[str] = Field(default=["team_view"])
     ALLOWED_DATABASE_NAMES: list[str] = Field(default=["core"])
+    ALLOWED_READ_TABLE_NAMES: list[str] = Field(default=["teams"])
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

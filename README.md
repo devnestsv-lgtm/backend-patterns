@@ -7,7 +7,7 @@ This repository contains a **working local prototype** of a lightweight SaaS-rea
 - Multi-tenant data model in one PostgreSQL database (`tenant_id` on business tables).
 - Ingestion endpoint accepting flexible ETL payloads and writing to raw append-only JSONB tables.
 - Processing step from raw to curated/core structured tables.
-- Read path exposed only via Python API calling stored procedures.
+- Read path exposed only via Python API calling generic stored procedures.
 - JWT/API key auth model with tenant extraction and tenant-scoped access.
 - Retention cleanup mechanism for raw data.
 
@@ -21,7 +21,7 @@ app/
     deps.py                 # Shared FastAPI dependencies (auth context injection)
     routes/
       ingest.py             # POST /ingest endpoint
-      read.py               # GET /teams endpoint (stored-procedure backed)
+      read.py               # POST /read/query endpoint (stored-procedure backed)
   core/
     config.py               # Environment-driven settings
     database.py             # SQLAlchemy engine/session lifecycle
@@ -69,7 +69,7 @@ tests/
 - It is extracted from JWT/API key into `AuthContext` and used for all data operations.
 
 ### Stored procedure layer
-- Stored procedures require `tenant_id` argument (e.g., `core.sp_get_teams(p_tenant_id UUID)`).
+- Stored procedures require `tenant_id` argument (e.g., `core.sp_read_records(...)`).
 - Procedure SQL always filters by `tenant_id`.
 
 ---
@@ -95,6 +95,28 @@ Validation performed:
 - Batch size max enforced (`MAX_INGEST_BATCH_SIZE`).
 
 No dynamic SQL string concatenation is used.
+
+
+## Generic Read Payload Contract
+
+```json
+{
+  "Tenant_ID": "optional-uuid-for-audit-only",
+  "Table_Name": "teams",
+  "LastUpdatedDateStart": "2026-01-01T00:00:00Z",
+  "LastUpdatedDateEnd": "2026-12-31T23:59:59Z",
+  "CreatedDateStart": "2026-01-01T00:00:00Z",
+  "CreatedDateEnd": "2026-12-31T23:59:59Z",
+  "RecordID": 12345
+}
+```
+
+Notes:
+- `Tenant_ID` is optional and must match auth tenant if supplied.
+- Tenant filtering is enforced using auth-derived tenant_id, not payload trust.
+- `Table_Name` is allow-listed inside the stored procedure to avoid dynamic SQL injection.
+
+---
 
 ---
 
@@ -156,10 +178,18 @@ curl -X POST http://127.0.0.1:8000/ingest \
   }'
 ```
 
-## 6) Read curated data through stored procedure-backed API
+## 6) Read curated data through generic stored procedure-backed API
 
 ```bash
-curl http://127.0.0.1:8000/teams -H 'X-API-Key: local-dev-api-key'
+curl -X POST http://127.0.0.1:8000/read/query \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: local-dev-api-key' \
+  -d '{
+    "Table_Name": "teams",
+    "LastUpdatedDateStart": "2026-01-01T00:00:00Z",
+    "LastUpdatedDateEnd": "2026-12-31T23:59:59Z",
+    "RecordID": 12345
+  }'
 ```
 
 ## 7) Run retention cleanup script

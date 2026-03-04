@@ -8,12 +8,13 @@ preventing malformed data from reaching persistence layers.
 # ===============================
 # STANDARD LIBRARY IMPORTS
 # ===============================
-from typing import Any
+from datetime import datetime
+from typing import Any, Optional
 
 # ===============================
 # THIRD-PARTY IMPORTS
 # ===============================
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class IngestionRequest(BaseModel):
@@ -49,8 +50,47 @@ class IngestionResponse(BaseModel):
     inserted_raw_count: int
 
 
-class TeamReadResponse(BaseModel):
-    """Read response model for curated team records."""
+class GenericReadRequest(BaseModel):
+    """
+    Generic read request body used by POST /read/query.
 
-    team_id: int
-    team_name: str
+    Important tenant isolation rule:
+    - `tenant_id` is optional for auditing/debug compatibility, but is ignored for
+      standard users and must match authenticated tenant if provided.
+    """
+
+    tenant_id: Optional[str] = Field(default=None, alias="Tenant_ID")
+    table_name: str = Field(..., alias="Table_Name")
+
+    last_updated_start: Optional[datetime] = Field(default=None, alias="LastUpdatedDateStart")
+    last_updated_end: Optional[datetime] = Field(default=None, alias="LastUpdatedDateEnd")
+
+    created_start: Optional[datetime] = Field(default=None, alias="CreatedDateStart")
+    created_end: Optional[datetime] = Field(default=None, alias="CreatedDateEnd")
+
+    record_id: Optional[int] = Field(default=None, alias="RecordID")
+
+    model_config = {"populate_by_name": True}
+
+    @model_validator(mode="after")
+    def validate_date_ranges(self) -> "GenericReadRequest":
+        """Ensures date start/end ranges are coherent when both values are supplied."""
+
+        if self.last_updated_start and self.last_updated_end:
+            if self.last_updated_start > self.last_updated_end:
+                raise ValueError("LastUpdatedDateStart must be <= LastUpdatedDateEnd")
+
+        if self.created_start and self.created_end:
+            if self.created_start > self.created_end:
+                raise ValueError("CreatedDateStart must be <= CreatedDateEnd")
+
+        return self
+
+
+class GenericReadResponseRow(BaseModel):
+    """Generic row response for dynamic curated-table reads."""
+
+    record_id: int
+    record_name: str
+    created_at: datetime
+    updated_at: datetime

@@ -19,7 +19,7 @@ def process_team_events(db: Session, tenant_id: str) -> int:
     Design decisions:
     - Uses SQL-side JSON extraction for performance and atomicity.
     - Applies tenant filter inside SQL to prevent cross-tenant processing.
-    - Upserts by (tenant_id, team_id) to keep latest team name.
+    - Upserts by (tenant_id, team_id) to keep latest team name and updated timestamp.
     """
 
     query = text(
@@ -35,7 +35,9 @@ def process_team_events(db: Session, tenant_id: str) -> int:
           AND r.payload ? 'teamId'
           AND r.payload ? 'teamName'
         ON CONFLICT (tenant_id, team_id)
-        DO UPDATE SET team_name = EXCLUDED.team_name
+        DO UPDATE
+        SET team_name = EXCLUDED.team_name,
+            updated_at = NOW()
         """
     )
 

@@ -2,7 +2,7 @@
 -- MULTI-TENANT DATA PLATFORM INITIAL DATABASE SETUP
 -- =====================================================
 -- This script creates schemas, raw/curated tables, auth tables, indexes,
--- and a read-only stored procedure used by the Python API.
+-- and stored procedures used by the Python API.
 
 -- ===============================
 -- SCHEMA CREATION
@@ -57,10 +57,13 @@ CREATE TABLE IF NOT EXISTS core.teams (
     team_id INTEGER NOT NULL,
     team_name TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (tenant_id, team_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_core_teams_tenant ON core.teams (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_core_teams_updated ON core.teams (tenant_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_core_teams_created ON core.teams (tenant_id, created_at);
 
 -- ===============================
 -- ANALYTICS EXAMPLE TABLE
@@ -74,21 +77,42 @@ CREATE TABLE IF NOT EXISTS analytics.team_counts_daily (
 );
 
 -- ===============================
--- STORED PROCEDURE (READ LAYER)
+-- GENERIC READ STORED PROCEDURE
 -- ===============================
--- SECURITY DEFINER is intentionally NOT used in this prototype.
--- The API calls this function with explicit tenant_id.
-CREATE OR REPLACE FUNCTION core.sp_get_teams(p_tenant_id UUID)
-RETURNS TABLE(team_id INTEGER, team_name TEXT)
+-- This procedure avoids free-form SQL table injection by branching explicitly
+-- on supported table names.
+CREATE OR REPLACE FUNCTION core.sp_read_records(
+    p_tenant_id UUID,
+    p_table_name TEXT,
+    p_last_updated_start TIMESTAMPTZ DEFAULT NULL,
+    p_last_updated_end TIMESTAMPTZ DEFAULT NULL,
+    p_created_start TIMESTAMPTZ DEFAULT NULL,
+    p_created_end TIMESTAMPTZ DEFAULT NULL,
+    p_record_id INTEGER DEFAULT NULL
+)
+RETURNS TABLE(record_id INTEGER, record_name TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    -- Explicit tenant filter to enforce isolation in DB read layer.
-    RETURN QUERY
-    SELECT t.team_id, t.team_name
-    FROM core.teams t
-    WHERE t.tenant_id = p_tenant_id
-    ORDER BY t.team_id;
+    -- Explicitly allow listed curated tables only.
+    IF p_table_name = 'teams' THEN
+        RETURN QUERY
+        SELECT
+            t.team_id AS record_id,
+            t.team_name AS record_name,
+            t.created_at,
+            t.updated_at
+        FROM core.teams t
+        WHERE t.tenant_id = p_tenant_id
+          AND (p_record_id IS NULL OR t.team_id = p_record_id)
+          AND (p_last_updated_start IS NULL OR t.updated_at >= p_last_updated_start)
+          AND (p_last_updated_end IS NULL OR t.updated_at <= p_last_updated_end)
+          AND (p_created_start IS NULL OR t.created_at >= p_created_start)
+          AND (p_created_end IS NULL OR t.created_at <= p_created_end)
+        ORDER BY t.team_id;
+    ELSE
+        RAISE EXCEPTION 'Unsupported table requested: %', p_table_name;
+    END IF;
 END;
 $$;
 
