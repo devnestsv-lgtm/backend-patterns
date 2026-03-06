@@ -44,6 +44,33 @@ tests/
 
 ---
 
+## Dockerfiles included
+
+- `Dockerfile.local`: local testing/development image (uses `uvicorn --reload`).
+- `Dockerfile`: deployment-oriented image (multi-stage, non-root, gunicorn + uvicorn workers).
+- `.dockerignore`: excludes local/cache/dev artifacts to keep build context smaller and safer.
+
+### Build and run local testing image
+
+```bash
+docker build -f Dockerfile.local -t backend-patterns:local .
+docker run --rm -p 8000:8000 --env-file .env backend-patterns:local
+```
+
+### Build deployment image
+
+```bash
+docker build -f Dockerfile -t backend-patterns:prod .
+```
+
+### Run deployment image locally (smoke test)
+
+```bash
+docker run --rm -p 8000:8000 --env-file .env backend-patterns:prod
+```
+
+---
+
 ## Authentication and Authorization Concept
 
 ### Human user flow (JWT)
