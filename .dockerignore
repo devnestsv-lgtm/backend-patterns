@@ -1,0 +1,44 @@
+# ===============================
+# GIT / VCS
+# ===============================
+.git
+.gitignore
+
+# ===============================
+# PYTHON CACHE / BUILD ARTIFACTS
+# ===============================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# ===============================
+# LOCAL ENVIRONMENTS / EDITOR
+# ===============================
+.venv/
+venv/
+.env
+.env.*
+.vscode/
+.idea/
+
+# ===============================
+# TESTS AND DOCS (not required at runtime)
+# ===============================
+tests/
+README.md
+
+# ===============================
+# LOCAL RUNTIME OUTPUT
+# ===============================
+*.log
+*.sqlite3
